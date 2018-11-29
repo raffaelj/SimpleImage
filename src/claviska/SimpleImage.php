@@ -926,12 +926,42 @@ class SimpleImage {
     // Rotate the image on a canvas with the desired background color
     $backgroundColor = $this->allocateColor($backgroundColor);
 
-    $this->image = imagerotate(
-      $this->image,
-      -(self::keepWithin($angle, -360, 360)),
-      $backgroundColor
-    );
-    imagecolortransparent($this->image, imagecolorallocatealpha($this->image, 0, 0, 0, 127));
+    if($this->mimeType == 'image/gif' && GD_BUNDLED === 1 && $this->bits == 8){
+
+      $transparencyIndex = imagecolortransparent($this->image);
+      if($transparencyIndex >= 0) {
+          $transparentColorRGBA = imagecolorsforindex($this->image, $transparencyIndex);
+          $transparencyIndex = imagecolorallocate($this->image, $transparentColorRGBA['red'], $transparentColorRGBA['green'], $transparentColorRGBA['blue']);
+          imagefill($this->image, 0, 0, $transparencyIndex);
+          imagecolortransparent($this->image, $transparencyIndex);
+      }
+
+      $transparentColor = imagecolorallocatealpha($this->image, 0, 0, 0, 127);
+
+      $this->image = imagerotate(
+        $this->image,
+        -(self::keepWithin($angle, -360, 360)),
+        $transparentColor
+      );
+
+      imagefill($this->image, 0, 0, $transparencyIndex);
+      imagecolortransparent($this->image, $transparencyIndex);
+
+      imagefill($this->image, 0, 0, $transparentColor);
+      imagecolortransparent($this->image, $transparentColor);
+
+      imagefill($this->image, 0, 0, $backgroundColor);
+
+    } else {
+
+      $this->image = imagerotate(
+        $this->image,
+        -(self::keepWithin($angle, -360, 360)),
+        $backgroundColor
+      );
+      imagecolortransparent($this->image, imagecolorallocatealpha($this->image, 0, 0, 0, 127));
+
+    }
 
     return $this;
   }
