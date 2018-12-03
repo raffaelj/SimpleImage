@@ -32,6 +32,13 @@ class SimpleImage {
 
   protected $image, $mimeType, $exif;
 
+  // stores values from getimagesize to check against the bitrate in some gif edge cases (e. g. 1bit transparent white)
+  protected $imageInfo;
+
+  // helper array to preserve original transparency values after creating truecolor
+  // image from gif file
+  protected $gifHelper;
+
   //////////////////////////////////////////////////////////////////////////////////////////////////
   // Magic methods
   //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -65,6 +72,9 @@ class SimpleImage {
     if($this->image !== null && get_resource_type($this->image) === 'gd') {
       imagedestroy($this->image);
     }
+    // if($this->gifHelper['image'] !== null && get_resource_type($this->gifHelper['image']) === 'gd') {
+      // imagedestroy($this->gifHelper['image']);
+    // }
   }
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -126,11 +136,14 @@ class SimpleImage {
       throw new \Exception("Invalid image file: $file", self::ERR_INVALID_IMAGE);
     }
     $this->mimeType = $info['mime'];
+    $this->imageInfo = $info;
 
     // Create image object from file
     switch($this->mimeType) {
     case 'image/gif':
       // Load the gif
+      $this->image = imagecreatefromgif($file);
+      /* 
       $gif = imagecreatefromgif($file);
       if($gif) {
         // Copy the gif over to a true color image to preserve its transparency. This is a
@@ -144,6 +157,7 @@ class SimpleImage {
         imagecopy($this->image, $gif, 0, 0, 0, 0, $width, $height);
         imagedestroy($gif);
       }
+       */
       break;
     case 'image/jpeg':
       $this->image = imagecreatefromjpeg($file);
@@ -160,7 +174,7 @@ class SimpleImage {
     }
 
     // Convert pallete images to true color images
-    imagepalettetotruecolor($this->image);
+    // imagepalettetotruecolor($this->image);
 
     // Load exif data from JPEG images
     if($this->mimeType === 'image/jpeg' && function_exists('exif_read_data')) {
@@ -231,7 +245,7 @@ class SimpleImage {
     // Generate the image
     switch($mimeType) {
     case 'image/gif':
-      imagesavealpha($this->image, true);
+      // imagesavealpha($this->image, true);
       imagegif($this->image, null);
       break;
     case 'image/jpeg':
@@ -239,7 +253,7 @@ class SimpleImage {
       imagejpeg($this->image, null, $quality);
       break;
     case 'image/png':
-      imagesavealpha($this->image, true);
+      // imagesavealpha($this->image, true);
       imagepng($this->image, null, round(9 * $quality / 100));
       break;
     case 'image/webp':
@@ -554,13 +568,43 @@ class SimpleImage {
     $y1 = self::keepWithin($y1, 0, $this->getHeight());
     $y2 = self::keepWithin($y2, 0, $this->getHeight());
 
-    // Crop it
-    $this->image = imagecrop($this->image, [
-      'x' => min($x1, $x2),
-      'y' => min($y1, $y2),
-      'width' => abs($x2 - $x1),
-      'height' => abs($y2 - $y1)
-    ]);
+    
+    $x = min($x1, $x2);
+    $y = min($y1, $y2);
+    $width = abs($x2 - $x1);
+    $height = abs($y2 - $y1);
+    
+    if($this->mimeType == 'image/png' || $this->mimeType == 'image/gif') {
+
+      // Create new cropped image
+      $newImage = imagecreatetruecolor($width, $height);
+      $this->preserveTransparency($newImage);
+      
+      // $newImage = $this->newImagePreserveTransparency($width, $height);
+      
+      imagecopy(
+        $newImage,
+        $this->image,
+        0, 0, $x, $y,
+        $width,
+        $height
+      );
+      $this->image = $newImage;
+
+    } else {
+
+      // Crop it
+      $this->image = imagecrop($this->image, [
+        'x' => min($x1, $x2),
+        'y' => min($y1, $y2),
+        'width' => abs($x2 - $x1),
+        'height' => abs($y2 - $y1)
+      ]);
+
+    }
+    
+    
+    
 
     return $this;
   }
@@ -781,22 +825,69 @@ class SimpleImage {
     // We can't use imagescale because it doesn't seem to preserve transparency properly. The
     // workaround is to create a new truecolor image, allocate a transparent color, and copy the
     // image over to it using imagecopyresampled.
-    $newImage = imagecreatetruecolor($width, $height);
-    $transparentColor = imagecolorallocatealpha($newImage, 0, 0, 0, 127);
-    imagecolortransparent($newImage, $transparentColor);
-    imagefill($newImage, 0, 0, $transparentColor);
-    imagecopyresampled(
-      $newImage,
-      $this->image,
-      0, 0, 0, 0,
-      $width,
-      $height,
-      $this->getWidth(),
-      $this->getHeight()
-    );
+    // $newImage = imagecreatetruecolor($width, $height);
+    // $transparentColor = imagecolorallocatealpha($newImage, 0, 0, 0, 127);
+    // imagecolortransparent($newImage, $transparentColor);
+    // imagefill($newImage, 0, 0, $transparentColor);
+    // imagecopyresampled(
+      // $newImage,
+      // $this->image,
+      // 0, 0, 0, 0,
+      // $width,
+      // $height,
+      // $this->getWidth(),
+      // $this->getHeight()
+    // );
+    
+    if($this->mimeType == 'image/png' || $this->mimeType == 'image/gif') {
+      
+      // Create new resized image
+      // $newImage = $this->newImagePreserveTransparency($width, $height);
+      $newImage = imagecreatetruecolor($width, $height);
+      $this->preserveTransparency($newImage);
+      
+      imagecopyresampled(
+        $newImage,
+        $this->image,
+        0, 0, 0, 0,
+        $width,
+        $height,
+        $this->getWidth(),
+        $this->getHeight()
+      );
+
+      $this->image = $newImage;
+
+      return $this;
+
+    }
+    if($this->mimeType == 'image/gif') {
+      
+      // $newImage = $this->newImagePreserveTransparency($width, $height);
+      $newImage = imagecreatetruecolor($width, $height);
+      $this->preserveTransparency($newImage);
+      
+      // imagecopyresized(
+      imagecopyresampled(
+          $newImage,
+          $this->image,
+          0, 0, 0, 0,
+          $width,
+          $height,
+          $this->getWidth(),
+          $this->getHeight()
+        );
+      
+      $this->image = $newImage;
+
+      return $this;
+    }
+
 
     // Swap out the new image
-    $this->image = $newImage;
+    // $this->image = $newImage;
+    
+    $this->image = imagescale($this->image, $width, $height);
 
     return $this;
   }
@@ -1813,5 +1904,190 @@ class SimpleImage {
 
     throw new \Exception("Invalid color value: $color", self::ERR_INVALID_COLOR);
   }
+  
+  /// helpers
+  
+  protected function preserveTransparency(&$image)
+    {
+        // Transparency for PNG images
+        if ($this->mimeType == 'image/png') {
+            imagealphablending($image, false);
+            imagesavealpha($image, true);
+        }
+
+        // Transparency for GIF images
+        if ($this->mimeType == 'image/gif') {
+            
+            // if (empty($this->gifHelper['image'])) {
+              
+            // }
+            
+            if (empty($this->gifHelper['transparentIndex'])) {
+              $transparentIndex = imagecolortransparent($this->image);
+              $this->gifHelper['transparentIndex'] = $transparentIndex;
+            } else {
+              $transparentIndex = $this->gifHelper['transparentIndex'];
+            }
+            
+// print_r($transparentIndex);
+// echo 'totalColors:'. print_r(imagecolorstotal($this->image), true);
+            if ($transparentIndex >= 0 /*&& $transparentIndex < imagecolorstotal($this->image)*/) {
+                
+                if (empty($this->gifHelper['transparentColor'])) {
+                  $transparentColor = imagecolorsforindex($this->image, $transparentIndex);
+                  $this->gifHelper['transparentColor'] = $transparentColor;
+                } else {
+                  $transparentColor = $this->gifHelper['transparentColor'];
+                }
+                
+// print_r($transparentColor);
+                // check for 1bit white
+                if ($transparentIndex == 1 && $this->imageInfo['bits'] == 1) {
+
+                  // if is white, only alpha channel differs and count returns 1
+                  // $isOneBitWhite = count(array_diff(imagecolorsforindex($this->image, 0), $transparentColor)) == 1 ? true : false;
+                  
+                  if (empty($this->gifHelper['isOneBitWhite'])) {
+                    $isOneBitWhite = count(array_diff(imagecolorsforindex($this->image, 0), $transparentColor)) == 1 ? true : false;
+                    $this->gifHelper['isOneBitWhite'] = $isOneBitWhite;
+                  } else {
+                    $isOneBitWhite = $this->gifHelper['isOneBitWhite'];
+                  }
+                  
+// print_r(imagecolorsforindex($this->image, 0));
+                  if ($isOneBitWhite) {
+// echo 'is one bit white';
+                    $transparentColor['red'] = $transparentColor['green'] = $transparentColor['blue'] = 200; // set transparent color near white, black would cause gray border artefacts
+                  }
+                }
+            }
+
+            if (isset($transparentColor)) {
+// echo 'transp color isset';
+                
+                // if (empty($this->gifHelper['transparentNewColor'])) {
+                  $transparentNewColor = imagecolorallocate($image, $transparentColor['red'], $transparentColor['green'], $transparentColor['blue']);
+                  // $this->gifHelper['transparentNewColor'] = $transparentNewColor;
+                // } else {
+                  // $transparentNewColor = $this->gifHelper['transparentNewColor'];
+                // }
+                
+                // if (empty($this->gifHelper['transparentNewIndex'])) {
+                  $transparentNewIndex = imagecolortransparent($image, $transparentNewColor);
+                  // $this->gifHelper['transparentNewIndex'] = $transparentNewIndex;
+                // } else {
+                  // $transparentNewIndex = $this->gifHelper['transparentNewIndex'];
+                // }
+                
+                // $transparentNewColor = imagecolorallocate($image, $transparentColor['red'], $transparentColor['green'], $transparentColor['blue']);
+                // $transparentNewIndex = imagecolortransparent($image, $transparentNewColor);
+// print_r($transparentNewColor);
+
+
+                imagefill($image, 0, 0, $transparentNewIndex );  // fill the new image with the transparent color
+                
+                // imagefill($image, 0, 0, $transparentNewColor );
+                
+                
+// imagepalettetotruecolor($this->image);
+            }
+        }
+    }
+  
+  protected function newImagePreserveTransparency($width, $height)
+    {
+        
+        
+        
+        // Transparency for PNG images
+        if ($this->mimeType == 'image/png') {
+            $image = imagecreatetruecolor($width, $height);
+            imagealphablending($image, false);
+            imagesavealpha($image, true);
+            return $image;
+        }
+
+        // Transparency for GIF images
+        if ($this->mimeType == 'image/gif') {
+            
+            // if (!empty($this->gifHelper['image'])) {
+              // return $this->gifHelper['image'];
+            // }
+            
+            $image = imagecreatetruecolor($width, $height);
+            
+            if (empty($this->gifHelper['transparentIndex'])) {
+              $transparentIndex = imagecolortransparent($this->image);
+              $this->gifHelper['transparentIndex'] = $transparentIndex;
+            } else {
+              $transparentIndex = $this->gifHelper['transparentIndex'];
+            }
+            
+// print_r($transparentIndex);
+// echo 'totalColors:'. print_r(imagecolorstotal($this->image), true);
+            if ($transparentIndex >= 0 /*&& $transparentIndex < imagecolorstotal($this->image)*/) {
+                
+                if (empty($this->gifHelper['transparentColor'])) {
+                  $transparentColor = imagecolorsforindex($this->image, $transparentIndex);
+                  $this->gifHelper['transparentColor'] = $transparentColor;
+                } else {
+                  $transparentColor = $this->gifHelper['transparentColor'];
+                }
+                
+// print_r($transparentColor);
+                // check for 1bit white
+                if ($transparentIndex == 1 && $this->imageInfo['bits'] == 1) {
+
+                  // if is white, only alpha channel differs and count returns 1
+                  // $isOneBitWhite = count(array_diff(imagecolorsforindex($this->image, 0), $transparentColor)) == 1 ? true : false;
+                  
+                  if (empty($this->gifHelper['isOneBitWhite'])) {
+                    $isOneBitWhite = count(array_diff(imagecolorsforindex($this->image, 0), $transparentColor)) == 1 ? true : false;
+                    $this->gifHelper['isOneBitWhite'] = $isOneBitWhite;
+                  } else {
+                    $isOneBitWhite = $this->gifHelper['isOneBitWhite'];
+                  }
+                  
+// print_r(imagecolorsforindex($this->image, 0));
+                  if ($isOneBitWhite) {
+// echo 'is one bit white';
+                    $transparentColor['red'] = $transparentColor['green'] = $transparentColor['blue'] = 200; // set transparent color near white, black would cause gray border artefacts
+                  }
+                }
+            }
+
+            if (isset($transparentColor)) {
+// echo 'transp color isset';
+                
+                // if (empty($this->gifHelper['transparentNewColor'])) {
+                  $transparentNewColor = imagecolorallocate($image, $transparentColor['red'], $transparentColor['green'], $transparentColor['blue']);
+                  // $this->gifHelper['transparentNewColor'] = $transparentNewColor;
+                // } else {
+                  // $transparentNewColor = $this->gifHelper['transparentNewColor'];
+                // }
+                
+                // if (empty($this->gifHelper['transparentNewIndex'])) {
+                  $transparentNewIndex = imagecolortransparent($image, $transparentNewColor);
+                  // $this->gifHelper['transparentNewIndex'] = $transparentNewIndex;
+                // } else {
+                  // $transparentNewIndex = $this->gifHelper['transparentNewIndex'];
+                // }
+                
+                // $transparentNewColor = imagecolorallocate($image, $transparentColor['red'], $transparentColor['green'], $transparentColor['blue']);
+                // $transparentNewIndex = imagecolortransparent($image, $transparentNewColor);
+// print_r($transparentNewColor);
+
+
+                imagefill($image, 0, 0, $transparentNewIndex );  // fill the new image with the transparent color
+                
+                // imagefill($image, 0, 0, $transparentNewColor );
+                
+                // $this->gifHelper['image'] = $image;
+                
+                return $image;
+// imagepalettetotruecolor($this->image);
+            }
+        }
+    }
 
 }
